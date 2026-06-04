@@ -1,0 +1,538 @@
+<!-- messenger.html — Многопользовательский мессенджер на Supabase -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мессенджер v2.0 — Многопользовательский</title>
+    <style>
+        /* Те же стили, что и в локальной версии, но добавлю индикатор соединения */
+        :root {
+            --bg: #f0f2f5;
+            --surface: #ffffff;
+            --primary: #0084ff;
+            --primary-hover: #006ed0;
+            --bubble-me: #0084ff;
+            --bubble-other: #e4e6eb;
+            --bubble-me-text: #ffffff;
+            --bubble-other-text: #050505;
+            --border: #d8dadf;
+            --radius: 18px;
+            --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 16px;
+            color: #1c1e21;
+        }
+
+        .messenger {
+            width: 100%;
+            max-width: 480px;
+            height: 90vh;
+            max-height: 800px;
+            background: var(--surface);
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .header h2 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+        .header input {
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            width: 100px;
+            outline: none;
+        }
+        .header input:focus { border-color: var(--primary); }
+
+        .connection-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f44336;
+            transition: background 0.3s;
+            flex-shrink: 0;
+        }
+        .connection-status.online { background: #4caf50; }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            background: var(--bg);
+        }
+        .messages::-webkit-scrollbar { width: 5px; }
+        .messages::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
+
+        .message {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            word-wrap: break-word;
+            font-size: 0.95rem;
+            line-height: 1.4;
+            animation: fadeIn 0.25s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.me {
+            align-self: flex-end;
+            background: var(--bubble-me);
+            color: var(--bubble-me-text);
+            border-bottom-right-radius: 4px;
+        }
+        .message.other {
+            align-self: flex-start;
+            background: var(--bubble-other);
+            color: var(--bubble-other-text);
+            border-bottom-left-radius: 4px;
+        }
+
+        .message .sender {
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-bottom: 2px;
+            opacity: 0.8;
+        }
+        .message .time {
+            font-size: 0.65rem;
+            opacity: 0.7;
+            margin-top: 3px;
+            text-align: right;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #65676b;
+            font-size: 0.9rem;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            font-size: 0.95rem;
+            outline: none;
+            min-width: 0;
+        }
+        .input-area input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,132,255,0.15);
+        }
+        .input-area button {
+            padding: 10px 20px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .input-area button:hover { background: var(--primary-hover); }
+        .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Индикатор "печатает..." */
+        .typing-indicator {
+            font-size: 0.8rem;
+            color: #65676b;
+            padding: 4px 16px;
+            font-style: italic;
+            display: none;
+        }
+        .typing-indicator.visible { display: block; }
+    </style>
+</head>
+<body>
+    <div class="messenger">
+        <!-- Шапка -->
+        <div class="header">
+            <h2>💬 Общий чат</h2>
+            <input
+                type="text"
+                id="usernameInput"
+                placeholder="Ваше имя"
+                maxlength="30"
+                aria-label="Имя пользователя"
+            />
+            <div class="connection-status" id="connectionStatus" title="Статус соединения"></div>
+        </div>
+
+        <!-- Индикатор печати -->
+        <div class="typing-indicator" id="typingIndicator">Кто-то печатает...</div>
+
+        <!-- Список сообщений -->
+        <div class="messages" id="messagesContainer" aria-live="polite">
+            <div class="empty-state">Загрузка сообщений...</div>
+        </div>
+
+        <!-- Поле ввода -->
+        <div class="input-area">
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="Введите сообщение..."
+                maxlength="2000"
+                aria-label="Текст сообщения"
+                autocomplete="off"
+                disabled
+            />
+            <button id="sendBtn" type="button" disabled>Отправить</button>
+        </div>
+    </div>
+
+    <!-- Supabase JS SDK из CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // ============ КОНФИГУРАЦИЯ ============
+            // ЗАМЕНИТЕ НА СВОИ ЗНАЧЕНИЯ из Supabase Dashboard:
+            const SUPABASE_URL = 'https://xxxxx.supabase.co';     // Project URL
+            const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'; // anon key
+
+            const MAX_MESSAGES_INITIAL = 50;  // Сколько загружать при старте
+            const MAX_MESSAGE_LENGTH = 2000;
+
+            // ============ ИНИЦИАЛИЗАЦИЯ SUPABASE ============
+            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+            // ============ DOM-элементы ============
+            const messagesContainer = document.getElementById('messagesContainer');
+            const messageInput = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const usernameInput = document.getElementById('usernameInput');
+            const connectionStatus = document.getElementById('connectionStatus');
+            const typingIndicator = document.getElementById('typingIndicator');
+
+            // ============ СОСТОЯНИЕ ============
+            let username = '';
+            let messages = [];
+            let realtimeChannel = null;
+            let typingTimer = null;
+            let online = false;
+
+            // ============ УТИЛИТЫ ============
+            function formatTime(isoString) {
+                try {
+                    return new Date(isoString).toLocaleTimeString('ru-RU', {
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                } catch { return '--:--'; }
+            }
+
+            function escapeHTML(str) {
+                const div = document.createElement('div');
+                div.appendChild(document.createTextNode(str));
+                return div.innerHTML;
+            }
+
+            // ============ РЕНДЕРИНГ ============
+            function renderMessages() {
+                if (messages.length === 0) {
+                    messagesContainer.innerHTML = '<div class="empty-state">Нет сообщений. Начните общение!</div>';
+                    return;
+                }
+
+                messagesContainer.innerHTML = '';
+                const fragment = document.createDocumentFragment();
+
+                messages.forEach(msg => {
+                    const isMe = msg.sender === username;
+                    const div = document.createElement('div');
+                    div.className = 'message ' + (isMe ? 'me' : 'other');
+
+                    let html = '';
+                    if (!isMe) {
+                        html += '<div class="sender">' + escapeHTML(msg.sender) + '</div>';
+                    }
+                    html += escapeHTML(msg.text);
+                    html += '<div class="time">' + formatTime(msg.created_at) + '</div>';
+                    div.innerHTML = html;
+
+                    fragment.appendChild(div);
+                });
+
+                messagesContainer.appendChild(fragment);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+
+            // ============ ЗАГРУЗКА ИСТОРИИ ============
+            async function loadHistory() {
+                try {
+                    const { data, error } = await supabase
+                        .from('messages')
+                        .select('*')
+                        .order('created_at', { ascending: false })
+                        .limit(MAX_MESSAGES_INITIAL);
+
+                    if (error) throw error;
+
+                    // Переворачиваем — на сервере получили по убыванию, а нам надо по возрастанию
+                    messages = (data || []).reverse();
+                    renderMessages();
+                } catch (err) {
+                    console.error('Ошибка загрузки истории:', err);
+                    messagesContainer.innerHTML = '<div class="empty-state" style="color:red">⚠️ Ошибка загрузки. Проверьте соединение.</div>';
+                }
+            }
+
+            // ============ ОТПРАВКА СООБЩЕНИЯ ============
+            async function sendMessage() {
+                const text = messageInput.value.trim();
+                if (!text || !username) return;
+
+                if (text.length > MAX_MESSAGE_LENGTH) {
+                    alert('Сообщение слишком длинное (макс. ' + MAX_MESSAGE_LENGTH + ' символов)');
+                    return;
+                }
+
+                sendBtn.disabled = true;
+                messageInput.disabled = true;
+
+                try {
+                    const { error } = await supabase
+                        .from('messages')
+                        .insert([{
+                            text: text,
+                            sender: username,
+                        }]);
+
+                    if (error) throw error;
+
+                    messageInput.value = '';
+                    messageInput.focus();
+                } catch (err) {
+                    console.error('Ошибка отправки:', err);
+                    alert('❌ Не удалось отправить сообщение. Проверьте соединение.');
+                } finally {
+                    sendBtn.disabled = false;
+                    messageInput.disabled = false;
+                }
+            }
+
+            // ============ REAL-TIME ПОДПИСКА ============
+            function subscribeToRealtime() {
+                // Отписываемся от предыдущего канала, если был
+                if (realtimeChannel) {
+                    supabase.removeChannel(realtimeChannel);
+                }
+
+                // Создаём канал и подписываемся на изменения в таблице messages
+                realtimeChannel = supabase
+                    .channel('public:messages')
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: 'INSERT',
+                            schema: 'public',
+                            table: 'messages',
+                        },
+                        (payload) => {
+                            const newMsg = payload.new;
+                            // Добавляем новое сообщение в локальный массив
+                            messages.push(newMsg);
+                            // Ограничиваем размер массива в памяти (опционально)
+                            if (messages.length > 200) {
+                                messages = messages.slice(-200);
+                            }
+                            renderMessages();
+
+                            // Скрываем индикатор печати, когда сообщение пришло
+                            hideTypingIndicator();
+                        }
+                    )
+                    .subscribe((status) => {
+                        console.log('Realtime status:', status);
+                        if (status === 'SUBSCRIBED') {
+                            setOnlineStatus(true);
+                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                            setOnlineStatus(false);
+                            // Пытаемся переподключиться через 3 секунды
+                            setTimeout(subscribeToRealtime, 3000);
+                        }
+                    });
+
+                // Отслеживаем события присутствия (presence) — для индикатора "печатает"
+                realtimeChannel.on('presence', { event: 'sync' }, () => {
+                    const state = realtimeChannel.presenceState();
+                    const others = Object.values(state).flat().filter(
+                        p => p.user !== username
+                    );
+                    if (others.length > 0 && others.some(p => p.typing)) {
+                        showTypingIndicator();
+                    } else {
+                        hideTypingIndicator();
+                    }
+                });
+            }
+
+            // ============ ИНДИКАТОР "ПЕЧАТАЕТ" ============
+            function showTypingIndicator() {
+                typingIndicator.classList.add('visible');
+            }
+
+            function hideTypingIndicator() {
+                typingIndicator.classList.remove('visible');
+            }
+
+            async function trackTyping() {
+                if (!username || !realtimeChannel) return;
+
+                // Отправляем событие присутствия: "я печатаю"
+                try {
+                    await realtimeChannel.track({
+                        user: username,
+                        typing: true,
+                        online_at: new Date().toISOString(),
+                    });
+
+                    // Сбрасываем таймер
+                    clearTimeout(typingTimer);
+                    // Через 2 секунды бездействия — "перестал печатать"
+                    typingTimer = setTimeout(async () => {
+                        try {
+                            await realtimeChannel.track({
+                                user: username,
+                                typing: false,
+                                online_at: new Date().toISOString(),
+                            });
+                        } catch (e) {
+                            // Игнорируем ошибки трекинга
+                        }
+                    }, 2000);
+                } catch (e) {
+                    // Игнорируем
+                }
+            }
+
+            // ============ СТАТУС СОЕДИНЕНИЯ ============
+            function setOnlineStatus(isOnline) {
+                online = isOnline;
+                connectionStatus.classList.toggle('online', isOnline);
+                connectionStatus.title = isOnline ? 'Подключено' : 'Нет соединения';
+
+                messageInput.disabled = !isOnline || !username;
+                sendBtn.disabled = !isOnline || !username;
+
+                if (!isOnline) {
+                    messagesContainer.insertAdjacentHTML(
+                        'beforeend',
+                        '<div style="text-align:center;color:#f44336;font-size:0.8rem;padding:8px">⚠️ Соединение потеряно. Переподключение...</div>'
+                    );
+                }
+            }
+
+            // ============ ОБРАБОТЧИКИ СОБЫТИЙ ============
+            sendBtn.addEventListener('click', sendMessage);
+            messageInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+
+            // Отслеживание печати
+            messageInput.addEventListener('input', function() {
+                if (username && online) {
+                    trackTyping();
+                }
+            });
+
+            // Изменение имени пользователя
+            usernameInput.addEventListener('input', function() {
+                const newUsername = usernameInput.value.trim();
+                if (newUsername !== username) {
+                    username = newUsername;
+                    if (username && online) {
+                        messageInput.disabled = false;
+                        sendBtn.disabled = false;
+                    } else {
+                        messageInput.disabled = true;
+                        sendBtn.disabled = true;
+                    }
+                    // Обновляем отображение (свои сообщения перекрасятся)
+                    renderMessages();
+                }
+            });
+
+            // ============ ВОССТАНОВЛЕНИЕ ИМЕНИ ============
+            const savedUsername = localStorage.getItem('messenger_username');
+            if (savedUsername) {
+                usernameInput.value = savedUsername;
+                username = savedUsername;
+            }
+            usernameInput.addEventListener('change', function() {
+                const val = usernameInput.value.trim();
+                if (val) {
+                    localStorage.setItem('messenger_username', val);
+                    username = val;
+                    messageInput.disabled = !online;
+                    sendBtn.disabled = !online;
+                    renderMessages();
+                }
+            });
+
+            // ============ ЗАПУСК ============
+            async function init() {
+                await loadHistory();
+                subscribeToRealtime();
+
+                if (username) {
+                    messageInput.disabled = false;
+                    sendBtn.disabled = false;
+                }
+                messageInput.focus();
+            }
+
+            init();
+
+            // Переподключение при потере фокуса/возврате
+            window.addEventListener('online', () => {
+                subscribeToRealtime();
+                loadHistory();
+            });
+            window.addEventListener('offline', () => setOnlineStatus(false));
+        })();
+    </script>
+</body>
+</html>
