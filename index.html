@@ -4,9 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Мессенджер v2.0 — Многопользовательский</title>
+    <title>Мессенджер v2.0</title>
     <style>
-        /* Те же стили, что и в локальной версии, но добавлю индикатор соединения */
         :root {
             --bg: #f0f2f5;
             --surface: #ffffff;
@@ -54,8 +53,10 @@
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
+            background: var(--surface);
+            z-index: 2;
         }
-        .header h2 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+        .header h2 { font-size: 1.1rem; font-weight: 600; flex: 1; min-width: 100px; }
         .header input {
             padding: 8px 14px;
             border: 1px solid var(--border);
@@ -63,18 +64,31 @@
             font-size: 0.85rem;
             width: 100px;
             outline: none;
+            min-width: 80px;
         }
         .header input:focus { border-color: var(--primary); }
 
         .connection-status {
-            width: 10px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
             background: #f44336;
             transition: background 0.3s;
             flex-shrink: 0;
+            box-shadow: 0 0 6px rgba(0,0,0,0.2);
         }
-        .connection-status.online { background: #4caf50; }
+        .connection-status.online {
+            background: #4caf50;
+            box-shadow: 0 0 8px rgba(76,175,80,0.6);
+        }
+        .connection-status.connecting {
+            background: #ff9800;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
 
         .messages {
             flex: 1;
@@ -95,10 +109,10 @@
             word-wrap: break-word;
             font-size: 0.95rem;
             line-height: 1.4;
-            animation: fadeIn 0.25s ease;
+            animation: fadeIn 0.3s ease;
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(8px); }
+            from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
@@ -135,6 +149,26 @@
             justify-content: center;
             color: #65676b;
             font-size: 0.9rem;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .system-message {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #65676b;
+            padding: 8px;
+            margin: 4px 0;
+        }
+        .system-message.error {
+            color: #f44336;
+            background: #ffebee;
+            border-radius: 8px;
+        }
+        .system-message.success {
+            color: #4caf50;
+            background: #e8f5e9;
+            border-radius: 8px;
         }
 
         .input-area {
@@ -142,6 +176,8 @@
             gap: 8px;
             padding: 12px 16px;
             border-top: 1px solid var(--border);
+            background: var(--surface);
+            z-index: 2;
         }
         .input-area input {
             flex: 1;
@@ -165,24 +201,18 @@
             font-weight: 600;
             cursor: pointer;
             transition: 0.2s;
+            white-space: nowrap;
         }
         .input-area button:hover { background: var(--primary-hover); }
-        .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        /* Индикатор "печатает..." */
-        .typing-indicator {
-            font-size: 0.8rem;
-            color: #65676b;
-            padding: 4px 16px;
-            font-style: italic;
-            display: none;
+        .input-area button:active { transform: scale(0.97); }
+        .input-area button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
-        .typing-indicator.visible { display: block; }
     </style>
 </head>
 <body>
     <div class="messenger">
-        <!-- Шапка -->
         <div class="header">
             <h2>💬 Общий чат</h2>
             <input
@@ -192,18 +222,13 @@
                 maxlength="30"
                 aria-label="Имя пользователя"
             />
-            <div class="connection-status" id="connectionStatus" title="Статус соединения"></div>
+            <div class="connection-status" id="connectionStatus" title="Подключение..."></div>
         </div>
 
-        <!-- Индикатор печати -->
-        <div class="typing-indicator" id="typingIndicator">Кто-то печатает...</div>
-
-        <!-- Список сообщений -->
         <div class="messages" id="messagesContainer" aria-live="polite">
             <div class="empty-state">Загрузка сообщений...</div>
         </div>
 
-        <!-- Поле ввода -->
         <div class="input-area">
             <input
                 type="text"
@@ -218,7 +243,7 @@
         </div>
     </div>
 
-    <!-- Supabase JS SDK из CDN -->
+    <!-- Supabase JS SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
     <script>
@@ -226,15 +251,18 @@
             'use strict';
 
             // ============ КОНФИГУРАЦИЯ ============
-            // ЗАМЕНИТЕ НА СВОИ ЗНАЧЕНИЯ из Supabase Dashboard:
-            const SUPABASE_URL = 'https://qylakybvspyxxwuvpiuw.supabase.co';     // Project URL
-            const SUPABASE_ANON_KEY = 'sb_publishable_A6nWldtf6s6m2hiQC_YbWw_HcBXEazO'; // anon key
-
-            const MAX_MESSAGES_INITIAL = 50;  // Сколько загружать при старте
-            const MAX_MESSAGE_LENGTH = 2000;
+            const SUPABASE_URL = 'https://qylakybvspyxxwuvpiuw.supabase.co';
+            const SUPABASE_ANON_KEY = 'sb_publishable_A6nWldtf6s6m2hiQC_YbWw_HcBXEazO';
+            const MAX_MESSAGES_INITIAL = 50;
 
             // ============ ИНИЦИАЛИЗАЦИЯ SUPABASE ============
-            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                realtime: {
+                    params: {
+                        eventsPerSecond: 10
+                    }
+                }
+            });
 
             // ============ DOM-элементы ============
             const messagesContainer = document.getElementById('messagesContainer');
@@ -242,14 +270,14 @@
             const sendBtn = document.getElementById('sendBtn');
             const usernameInput = document.getElementById('usernameInput');
             const connectionStatus = document.getElementById('connectionStatus');
-            const typingIndicator = document.getElementById('typingIndicator');
 
             // ============ СОСТОЯНИЕ ============
             let username = '';
             let messages = [];
             let realtimeChannel = null;
-            let typingTimer = null;
-            let online = false;
+            let isConnected = false;
+            let reconnectTimer = null;
+            let isSending = false;
 
             // ============ УТИЛИТЫ ============
             function formatTime(isoString) {
@@ -266,34 +294,50 @@
                 return div.innerHTML;
             }
 
-            // ============ РЕНДЕРИНГ ============
-            function renderMessages() {
-                if (messages.length === 0) {
-                    messagesContainer.innerHTML = '<div class="empty-state">Нет сообщений. Начните общение!</div>';
-                    return;
-                }
-
-                messagesContainer.innerHTML = '';
-                const fragment = document.createDocumentFragment();
-
-                messages.forEach(msg => {
-                    const isMe = msg.sender === username;
-                    const div = document.createElement('div');
-                    div.className = 'message ' + (isMe ? 'me' : 'other');
-
-                    let html = '';
-                    if (!isMe) {
-                        html += '<div class="sender">' + escapeHTML(msg.sender) + '</div>';
-                    }
-                    html += escapeHTML(msg.text);
-                    html += '<div class="time">' + formatTime(msg.created_at) + '</div>';
-                    div.innerHTML = html;
-
-                    fragment.appendChild(div);
-                });
-
-                messagesContainer.appendChild(fragment);
+            function addSystemMessage(text, type = '') {
+                const div = document.createElement('div');
+                div.className = 'system-message ' + type;
+                div.textContent = text;
+                messagesContainer.appendChild(div);
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+
+            // ============ СТАТУС СОЕДИНЕНИЯ ============
+            function setConnectionStatus(status) {
+                connectionStatus.classList.remove('online', 'connecting');
+                
+                switch(status) {
+                    case 'connected':
+                        connectionStatus.classList.add('online');
+                        connectionStatus.title = 'Подключено';
+                        isConnected = true;
+                        enableInputs();
+                        break;
+                    case 'connecting':
+                        connectionStatus.classList.add('connecting');
+                        connectionStatus.title = 'Подключение...';
+                        isConnected = false;
+                        disableInputs();
+                        break;
+                    case 'disconnected':
+                        connectionStatus.title = 'Нет соединения';
+                        isConnected = false;
+                        disableInputs();
+                        addSystemMessage('⚠️ Соединение потеряно. Переподключение...', 'error');
+                        break;
+                }
+            }
+
+            function enableInputs() {
+                if (username) {
+                    messageInput.disabled = false;
+                    sendBtn.disabled = false;
+                }
+            }
+
+            function disableInputs() {
+                messageInput.disabled = true;
+                sendBtn.disabled = true;
             }
 
             // ============ ЗАГРУЗКА ИСТОРИИ ============
@@ -307,27 +351,76 @@
 
                     if (error) throw error;
 
-                    // Переворачиваем — на сервере получили по убыванию, а нам надо по возрастанию
                     messages = (data || []).reverse();
                     renderMessages();
+                    
+                    if (messages.length === 0) {
+                        messagesContainer.innerHTML = '<div class="empty-state">Нет сообщений. Начните общение!</div>';
+                    }
+                    
+                    addSystemMessage('✅ История загружена (' + messages.length + ' сообщений)', 'success');
+                    
+                    // Удаляем сообщение "успех" через 3 секунды
+                    setTimeout(() => {
+                        const successMessages = messagesContainer.querySelectorAll('.system-message.success');
+                        successMessages.forEach(el => el.remove());
+                    }, 3000);
+                    
                 } catch (err) {
                     console.error('Ошибка загрузки истории:', err);
-                    messagesContainer.innerHTML = '<div class="empty-state" style="color:red">⚠️ Ошибка загрузки. Проверьте соединение.</div>';
+                    messagesContainer.innerHTML = '<div class="empty-state" style="color:#f44336">❌ Ошибка загрузки истории</div>';
+                    addSystemMessage('❌ Ошибка загрузки: ' + err.message, 'error');
                 }
+            }
+
+            // ============ РЕНДЕРИНГ ============
+            function renderMessages() {
+                // Сохраняем системные сообщения
+                const systemMessages = messagesContainer.querySelectorAll('.system-message');
+                
+                messagesContainer.innerHTML = '';
+                
+                if (messages.length === 0) {
+                    messagesContainer.innerHTML = '<div class="empty-state">Нет сообщений. Начните общение!</div>';
+                } else {
+                    const fragment = document.createDocumentFragment();
+
+                    messages.forEach(msg => {
+                        const isMe = msg.sender === username;
+                        const div = document.createElement('div');
+                        div.className = 'message ' + (isMe ? 'me' : 'other');
+
+                        let html = '';
+                        if (!isMe) {
+                            html += '<div class="sender">' + escapeHTML(msg.sender) + '</div>';
+                        }
+                        html += escapeHTML(msg.text);
+                        html += '<div class="time">' + formatTime(msg.created_at) + '</div>';
+                        div.innerHTML = html;
+
+                        fragment.appendChild(div);
+                    });
+
+                    messagesContainer.appendChild(fragment);
+                }
+                
+                // Восстанавливаем системные сообщения, которые не старше 10 секунд
+                systemMessages.forEach(el => {
+                    if (el.dataset.timestamp && (Date.now() - parseInt(el.dataset.timestamp)) < 10000) {
+                        messagesContainer.appendChild(el);
+                    }
+                });
+                
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
 
             // ============ ОТПРАВКА СООБЩЕНИЯ ============
             async function sendMessage() {
                 const text = messageInput.value.trim();
-                if (!text || !username) return;
+                if (!text || !username || isSending) return;
 
-                if (text.length > MAX_MESSAGE_LENGTH) {
-                    alert('Сообщение слишком длинное (макс. ' + MAX_MESSAGE_LENGTH + ' символов)');
-                    return;
-                }
-
+                isSending = true;
                 sendBtn.disabled = true;
-                messageInput.disabled = true;
 
                 try {
                     const { error } = await supabase
@@ -341,23 +434,34 @@
 
                     messageInput.value = '';
                     messageInput.focus();
+                    
                 } catch (err) {
                     console.error('Ошибка отправки:', err);
-                    alert('❌ Не удалось отправить сообщение. Проверьте соединение.');
-                } finally {
-                    sendBtn.disabled = false;
-                    messageInput.disabled = false;
+                    addSystemMessage('❌ Ошибка отправки: ' + err.message, 'error');
+                    
+                    // Включаем обратно через 1 секунду
+                    setTimeout(() => {
+                        isSending = false;
+                        if (username && isConnected) {
+                            sendBtn.disabled = false;
+                        }
+                    }, 1000);
+                    return;
                 }
+                
+                isSending = false;
+                sendBtn.disabled = false;
             }
 
-            // ============ REAL-TIME ПОДПИСКА ============
+            // ============ REAL-TIME ПОДПИСКА (ИСПРАВЛЕНО) ============
             function subscribeToRealtime() {
-                // Отписываемся от предыдущего канала, если был
+                // Отписываемся от предыдущего канала
                 if (realtimeChannel) {
                     supabase.removeChannel(realtimeChannel);
                 }
 
-                // Создаём канал и подписываемся на изменения в таблице messages
+                setConnectionStatus('connecting');
+
                 realtimeChannel = supabase
                     .channel('public:messages')
                     .on(
@@ -368,102 +472,60 @@
                             table: 'messages',
                         },
                         (payload) => {
+                            console.log('Новое сообщение:', payload.new);
                             const newMsg = payload.new;
-                            // Добавляем новое сообщение в локальный массив
-                            messages.push(newMsg);
-                            // Ограничиваем размер массива в памяти (опционально)
-                            if (messages.length > 200) {
-                                messages = messages.slice(-200);
+                            
+                            // Проверяем, нет ли уже такого сообщения (защита от дублей)
+                            const exists = messages.some(m => m.id === newMsg.id);
+                            if (!exists) {
+                                messages.push(newMsg);
+                                if (messages.length > 200) {
+                                    messages = messages.slice(-200);
+                                }
+                                renderMessages();
                             }
-                            renderMessages();
-
-                            // Скрываем индикатор печати, когда сообщение пришло
-                            hideTypingIndicator();
                         }
                     )
-                    .subscribe((status) => {
-                        console.log('Realtime status:', status);
+                    .subscribe((status, err) => {
+                        console.log('Realtime статус:', status, err);
+                        
                         if (status === 'SUBSCRIBED') {
-                            setOnlineStatus(true);
-                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                            setOnlineStatus(false);
-                            // Пытаемся переподключиться через 3 секунды
-                            setTimeout(subscribeToRealtime, 3000);
+                            console.log('✅ Подключено к real-time');
+                            setConnectionStatus('connected');
+                            addSystemMessage('✅ Подключено к чату', 'success');
+                        } else if (status === 'CHANNEL_ERROR') {
+                            console.error('❌ Ошибка канала:', err);
+                            setConnectionStatus('disconnected');
+                            scheduleReconnect();
+                        } else if (status === 'CLOSED') {
+                            console.log('Канал закрыт');
+                            setConnectionStatus('disconnected');
+                            scheduleReconnect();
+                        } else if (status === 'TIMED_OUT') {
+                            console.log('Таймаут канала');
+                            setConnectionStatus('disconnected');
+                            scheduleReconnect();
                         }
                     });
-
-                // Отслеживаем события присутствия (presence) — для индикатора "печатает"
-                realtimeChannel.on('presence', { event: 'sync' }, () => {
-                    const state = realtimeChannel.presenceState();
-                    const others = Object.values(state).flat().filter(
-                        p => p.user !== username
-                    );
-                    if (others.length > 0 && others.some(p => p.typing)) {
-                        showTypingIndicator();
-                    } else {
-                        hideTypingIndicator();
-                    }
-                });
             }
 
-            // ============ ИНДИКАТОР "ПЕЧАТАЕТ" ============
-            function showTypingIndicator() {
-                typingIndicator.classList.add('visible');
-            }
-
-            function hideTypingIndicator() {
-                typingIndicator.classList.remove('visible');
-            }
-
-            async function trackTyping() {
-                if (!username || !realtimeChannel) return;
-
-                // Отправляем событие присутствия: "я печатаю"
-                try {
-                    await realtimeChannel.track({
-                        user: username,
-                        typing: true,
-                        online_at: new Date().toISOString(),
-                    });
-
-                    // Сбрасываем таймер
-                    clearTimeout(typingTimer);
-                    // Через 2 секунды бездействия — "перестал печатать"
-                    typingTimer = setTimeout(async () => {
-                        try {
-                            await realtimeChannel.track({
-                                user: username,
-                                typing: false,
-                                online_at: new Date().toISOString(),
-                            });
-                        } catch (e) {
-                            // Игнорируем ошибки трекинга
-                        }
-                    }, 2000);
-                } catch (e) {
-                    // Игнорируем
+            function scheduleReconnect() {
+                // Очищаем предыдущий таймер
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
                 }
-            }
-
-            // ============ СТАТУС СОЕДИНЕНИЯ ============
-            function setOnlineStatus(isOnline) {
-                online = isOnline;
-                connectionStatus.classList.toggle('online', isOnline);
-                connectionStatus.title = isOnline ? 'Подключено' : 'Нет соединения';
-
-                messageInput.disabled = !isOnline || !username;
-                sendBtn.disabled = !isOnline || !username;
-
-                if (!isOnline) {
-                    messagesContainer.insertAdjacentHTML(
-                        'beforeend',
-                        '<div style="text-align:center;color:#f44336;font-size:0.8rem;padding:8px">⚠️ Соединение потеряно. Переподключение...</div>'
-                    );
-                }
+                
+                // Пробуем переподключиться через 3 секунды
+                reconnectTimer = setTimeout(() => {
+                    console.log('🔄 Попытка переподключения...');
+                    addSystemMessage('🔄 Переподключение...', '');
+                    subscribeToRealtime();
+                }, 3000);
             }
 
             // ============ ОБРАБОТЧИКИ СОБЫТИЙ ============
             sendBtn.addEventListener('click', sendMessage);
+            
             messageInput.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -471,67 +533,87 @@
                 }
             });
 
-            // Отслеживание печати
-            messageInput.addEventListener('input', function() {
-                if (username && online) {
-                    trackTyping();
-                }
-            });
-
-            // Изменение имени пользователя
+            // Имя пользователя
             usernameInput.addEventListener('input', function() {
                 const newUsername = usernameInput.value.trim();
                 if (newUsername !== username) {
                     username = newUsername;
-                    if (username && online) {
-                        messageInput.disabled = false;
-                        sendBtn.disabled = false;
+                    localStorage.setItem('messenger_username', username);
+                    
+                    if (username && isConnected) {
+                        enableInputs();
                     } else {
-                        messageInput.disabled = true;
-                        sendBtn.disabled = true;
+                        disableInputs();
                     }
-                    // Обновляем отображение (свои сообщения перекрасятся)
+                    
                     renderMessages();
                 }
             });
 
-            // ============ ВОССТАНОВЛЕНИЕ ИМЕНИ ============
-            const savedUsername = localStorage.getItem('messenger_username');
-            if (savedUsername) {
-                usernameInput.value = savedUsername;
-                username = savedUsername;
-            }
+            // Сохранение имени при потере фокуса
             usernameInput.addEventListener('change', function() {
                 const val = usernameInput.value.trim();
                 if (val) {
                     localStorage.setItem('messenger_username', val);
                     username = val;
-                    messageInput.disabled = !online;
-                    sendBtn.disabled = !online;
+                    if (isConnected) {
+                        enableInputs();
+                    }
                     renderMessages();
                 }
             });
 
             // ============ ЗАПУСК ============
             async function init() {
+                // Восстанавливаем имя пользователя
+                const savedUsername = localStorage.getItem('messenger_username');
+                if (savedUsername) {
+                    usernameInput.value = savedUsername;
+                    username = savedUsername;
+                }
+
+                // Загружаем историю
                 await loadHistory();
+                
+                // Подключаемся к real-time
                 subscribeToRealtime();
 
-                if (username) {
-                    messageInput.disabled = false;
-                    sendBtn.disabled = false;
+                // Фокус на поле ввода, если имя уже есть
+                if (username && isConnected) {
+                    enableInputs();
                 }
-                messageInput.focus();
+                
+                setTimeout(() => {
+                    if (username) {
+                        messageInput.focus();
+                    } else {
+                        usernameInput.focus();
+                    }
+                }, 500);
             }
 
             init();
 
-            // Переподключение при потере фокуса/возврате
+            // Обработка переподключения при возврате в онлайн
             window.addEventListener('online', () => {
+                console.log('Браузер вернулся в онлайн');
+                addSystemMessage('🌐 Интернет восстановлен', 'success');
                 subscribeToRealtime();
                 loadHistory();
             });
-            window.addEventListener('offline', () => setOnlineStatus(false));
+            
+            window.addEventListener('offline', () => {
+                console.log('Браузер офлайн');
+                setConnectionStatus('disconnected');
+            });
+
+            // Переподключение при возвращении на вкладку
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && !isConnected) {
+                    console.log('Вкладка активна, переподключаемся');
+                    subscribeToRealtime();
+                }
+            });
         })();
     </script>
 </body>
